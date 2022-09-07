@@ -3,25 +3,73 @@ Module Bookstore
     Entity Book
     {
         ShortString Code { AutoCode; }
-        ShortString Title;
-        Integer NumberOfPages;
+        ShortString Title { Required; }
+        ShortString ShortTitle;
+        Integer NumberOfPages { MinValue 1; MaxValue 1000; }
         Reference Author Bookstore.Person;
+        Reference Debtor Bookstore.Person;
 
         ItemFilter CommonMisspelling 'book => book.Title.Contains("curiousity")';
         InvalidData CommonMisspelling 'It is not allowed to enter misspelled word "curiousity".';
 
+        ComposableFilterBy LongBooks2 '(query, repository, parameter) =>
+            {
+                return query.Where(item => item.NumberOfPages >= 500);
+            }';
+
+       ComposableFilterBy LongBooks3 '(query, repository, parameter) =>
+            {
+                var filtered = query.Where(item => item.NumberOfPages >= parameter.MinimumPages);
+                if (parameter.ForeignBooksOnly == true)
+                    filtered = filtered.Where(item => item.Extension_ForeignBook.ID != null);
+                return filtered;
+            }';
+
+        FilterBy ComplexSearch '(repository, parameter) =>
+            {
+                var query = repository.Bookstore.Book.Query(item => item.NumberOfPages >= parameter.MinimumPages);
+                if (parameter.ForeignBooksOnly == true)
+                    query = query.Where(item => item.Extension_ForeignBook.ID != null);
+                Book[] books = query.ToSimple().ToArray();
+
+                if (parameter.MaskTitles == true)
+                    foreach (var book in books.Where(b => !string.IsNullOrEmpty(b.Title)))
+                        book.Title = book.Title.First() + "***" + book.Title.Last();
+
+                return books;
+            }';
+
         Logging;
    }
+
+   Parameter LongBooks2
+    {
+    }
+
+    Parameter LongBooks3
+    {
+        Integer MinimumPages;
+        Bool ForeignBooksOnly;
+    }
+
+    Parameter ComplexSearch
+    {
+        Integer MinimumPages;
+        Bool ForeignBooksOnly;
+        Bool MaskTitles;
+    }
 
     Entity Person
     {
         ShortString Name;
+        ShortString E_mail { RegExMatch "[\w-\.]+@([\w-]+\.)+[\w-]{2,4}" "Email not in good format."; }
     }
 
     Entity Comment
     {
         Reference Book { Detail; }
-        LongString Text;
+        DateTime Created { CreationTime; }
+        LongString Text { DenyUserEdit; } 
     }
 
     Entity ChildrensBook
@@ -52,5 +100,43 @@ Module Bookstore
         Reference Topic { Required; }
 
         UniqueMultiple 'Book Topic';
+    }
+
+    Browse BookGrid Bookstore.Book
+    {
+        Take Code;
+        Take Title;
+        Take 'Author.Name';
+        // NumberOfTopics -- Ask Bojan about this ???
+    }
+
+    SqlQueryable BookInfo
+        "SELECT b.ID,
+                NumberOfComments = COUNT(c.ID)
+         FROM
+         Bookstore.Book b
+         LEFT JOIN Bookstore.Comment c ON c.BookID = b.ID
+         GROUP BY
+         b.ID"
+    {
+        Extends Bookstore.Book;
+        Integer NumberOfComments;
+
+        AutodetectSqlDependencies;
+    }
+
+    Action InsertManyBooks
+    '(parameter, repository, userInfo) =>
+    {
+        for (int i = 0; i < parameter.NumberOfBooks; i++)
+        {
+            string newTitle = parameter.TitlePrefix + " - " + (i + 1);
+            var newBook = new Bookstore.Book { Code = "+++", Title = newTitle };
+            repository.Bookstore.Book.Insert(newBook);
+        }
+    }'
+    {
+        Integer NumberOfBooks;
+        ShortString TitlePrefix;
     }
 }
